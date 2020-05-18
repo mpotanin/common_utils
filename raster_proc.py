@@ -2,15 +2,24 @@ import os
 import sys
 import gdal, ogr, os, osr
 import numpy as np
+from random import seed
+from random import random
+# seed random number generator
+seed(1)
 
 
-def crop_raster_file_to_cutline (input_raster, output_tiff, vector_file, ndv = None):
+def generate_virtual_random_tif_path ():
+    return '/vsimem/memory_name' + str(random()) + '.tif'
+
+
+def crop_raster_file_to_cutline (input_raster, output_tiff, vector_file, src_ndv=None, dst_ndv = None):
     return gdal.Warp(output_tiff,
                 input_raster,
                 format = 'GTiff',
                 cutlineDSName = vector_file,
                 cropToCutline = True,
-                dstNodata=ndv
+                srcNodata=src_ndv,
+                dstNodata=dst_ndv
                 )
 
 

@@ -71,6 +71,44 @@ class BBOX :
         return bbox
 
 class vector_file:
+
+    @staticmethod
+    def get_all_geometry_in_wkt (vector_file, t_srs = None):
+
+        ds = gdal.OpenEx(vector_file, gdal.OF_VECTOR )
+        #ds = ogr.Open(vector_file)
+        if ds is None:
+            print ("Open failed: " + vector_file)
+            sys.exit( 1 )
+
+        lyr = ds.GetLayer(0)
+        lyr.ResetReading()
+        
+        #source_srs = lyr.GetSpatialRef()
+
+        coordTrans = 0
+        if not t_srs :
+            t_srs = osr.SpatialReference()
+            t_srs.ImportFromEPSG(4326)
+        
+        t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+        coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
+                                                        t_srs)
+    
+        output = list()
+
+        for fid in range(0,lyr.GetFeatureCount()):
+            feat = lyr.GetFeature(fid)
+            geom = feat.GetGeometryRef()
+            geom.Transform(coordTrans)
+            output.append((fid,geom.ExportToWkt()))
+
+        ds = None
+        return output  
+
+     
+
     @staticmethod
     def get_srs_from_file (vector_file):
         ds =  gdal.OpenEx(vector_file, gdal.OF_VECTOR )
@@ -86,7 +124,15 @@ class vector_file:
         if os.path.exists(filename):
             driver.DeleteDataSource(filename)
         outDataSource = driver.CreateDataSource(filename)
-        outlayer = outDataSource.CreateLayer('layer', srs, geom_type=ogr.wkbMultiPolygon)
+
+        srs_def = 0
+        if srs is None :
+            srs_def = osr.SpatialReference()
+            srs_def.ImportFromEPSG(4326)
+        else: 
+            srs_def = srs
+        
+        outlayer = outDataSource.CreateLayer('layer', srs_def, geom_type=ogr.wkbMultiPolygon)
 
         id_field = ogr.FieldDefn("id", ogr.OFTInteger)
         outlayer.CreateField(id_field)
