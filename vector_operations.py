@@ -5,6 +5,7 @@ import json
 import csv
 from io import BytesIO
 import requests
+import osgeo
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
@@ -90,11 +91,10 @@ class vector_file:
             t_srs = osr.SpatialReference()
             t_srs.ImportFromEPSG(4326)
         
-        try:
+        if int(osgeo.__version__[0]) >= 3:
+            # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
             t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        except ValueError:
-            print("WARNING: SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER) fail. " 
-                    "Possible not correct output from get_all_geometry_in_wkt func")
+       
 
         coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
                                                         t_srs)
