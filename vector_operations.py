@@ -82,8 +82,7 @@ class vector_file:
             sys.exit( 1 )
 
         lyr = ds.GetLayer(0)
-        lyr.ResetReading()
-        
+                
         #source_srs = lyr.GetSpatialRef()
 
         coordTrans = 0
@@ -91,15 +90,21 @@ class vector_file:
             t_srs = osr.SpatialReference()
             t_srs.ImportFromEPSG(4326)
         
-        t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        try:
+            t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        except ValueError:
+            print("WARNING: SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER) fail. " 
+                    "Possible not correct output from get_all_geometry_in_wkt func")
 
         coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
                                                         t_srs)
     
         output = list()
 
-        for fid in range(0,lyr.GetFeatureCount()):
-            feat = lyr.GetFeature(fid)
+        feat_count = lyr.GetFeatureCount()
+        lyr.ResetReading()
+        for fid in range(0,feat_count):
+            feat = lyr.GetNextFeature()
             geom = feat.GetGeometryRef()
             geom.Transform(coordTrans)
             output.append((fid,geom.ExportToWkt()))
