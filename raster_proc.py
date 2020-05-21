@@ -1,11 +1,42 @@
 import os
 import sys
-import gdal, ogr, os, osr
+import osgeo
+from osgeo import gdal
+from osgeo import ogr
+from osgeo import osr
 import numpy as np
 from random import seed
 from random import random
+from common_utils import vector_operations as vop
+
 # seed random number generator
 seed(1)
+
+def get_raster_bbox (raster_file, t_srs = None) :
+    gdal_ds = gdal.Open(raster_file)
+    if not gdal_ds :
+        return None
+    geotr = gdal_ds.GetGeoTransform()
+
+
+    ulp = ogr.Geometry(ogr.wkbPoint)
+    ulp.AddPoint(geotr[0],geotr[3])
+    lrp = ogr.Geometry(ogr.wkbPoint)
+    lrp.AddPoint(geotr[0] + geotr[1]*gdal_ds.RasterXSize,
+                    geotr[3] - geotr[1]*gdal_ds.RasterYSize )
+
+    if t_srs:
+        if int(osgeo.__version__[0]) >= 3:
+            # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
+            t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        coordTrans = osr.CoordinateTransformation(gdal_ds.GetSpatialRef(),t_srs)
+        ulp.Transform(coordTrans)
+        lrp.Transform(coordTrans)
+    
+    gdal_ds = None
+
+    return vop.BBOX(ulp.GetX(),lrp.GetY(),lrp.GetX(),ulp.GetY())
+
 
 
 def generate_virtual_random_tif_path ():
