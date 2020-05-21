@@ -29,7 +29,8 @@ def get_raster_bbox (raster_file, t_srs = None) :
         if int(osgeo.__version__[0]) >= 3:
             # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
             t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        coordTrans = osr.CoordinateTransformation(gdal_ds.GetSpatialRef(),t_srs)
+        raster_srs=osr.SpatialReference(wkt=gdal_ds.GetProjection())
+        coordTrans = osr.CoordinateTransformation(raster_srs,t_srs)
         ulp.Transform(coordTrans)
         lrp.Transform(coordTrans)
     
