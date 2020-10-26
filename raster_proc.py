@@ -12,6 +12,24 @@ from common_utils import vector_operations as vop
 # seed random number generator
 seed(1)
 
+def open_raster_as_image (input_band_file, cutline) :
+    in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
+    gdal.Warp(in_mem_tiff,
+            [input_band_file],
+            format = 'GTiff',
+            cutlineDSName = None if cutline is None else cutline,
+            cropToCutline = True,
+            srcNodata=0,
+            dstNodata=0
+            )
+    ds_obj = gdal.Open(in_mem_tiff)
+    band_obj = ds_obj.GetRasterBand(1)
+    img_obj = band_obj.ReadAsArray()
+
+    gdal.Unlink(in_mem_tiff)
+
+    return img_obj
+
 def get_raster_bbox (raster_file, t_srs = None) :
     gdal_ds = gdal.Open(raster_file)
     if not gdal_ds :
@@ -56,23 +74,81 @@ def crop_raster_file_to_cutline (input_raster, output_tiff, vector_file, src_ndv
 
 
 
-def array2raster(newRasterfn,rasterOrigin,pixelWidth,pixelHeight,prj_wkt,array):
+def array2georaster(newRasterfn,rasterOrigin,pixel_size,prj_wkt,array):
 
-    cols = array.shape[1]
-    rows = array.shape[0]
-    originX = rasterOrigin[0]
-    originY = rasterOrigin[1]
+    rows,cols = array.shape[0],array.shape[1]
+    originX,originY = rasterOrigin[0],rasterOrigin[1]
 
     driver = gdal.GetDriverByName('GTiff')
-    outRaster = driver.Create(newRasterfn, cols, rows, 1, gdal.GDT_Byte)
-    outRaster.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
+
+    output_type = {np.uint8:gdal.GDT_Byte,
+                    np.uint16:gdal.GDT_UInt16,
+                    np.int16:gdal.GDT_Int16,
+                    np.int32:gdal.GDT_Int32,
+                    np.uint32:gdal.GDT_UInt32,
+                    np.float:gdal.GDT_Float32,
+                    np.float64:gdal.GDT_Float32}[type(array[0][0])]
+    
+ 
+
+    outRaster = driver.Create(newRasterfn, cols, rows, 1, output_type)
+    outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
     outband = outRaster.GetRasterBand(1)
     outband.WriteArray(array)
     outRaster.SetProjection(prj_wkt)
     outband.FlushCache()
 
-def create_ndvi_file (red_band_file, nir_band_file, output_file) :
-    #create output:
+def extract_georeference (raster_file, cutline = None):
+    if cutline is not None:
+        in_mem_tif = os.path.join('/vsimem',str(random()) + '.tif')
+        gdal.Warp(in_mem_tif,
+                [raster_file],
+                format = 'GTiff',
+                cutlineDSName = cutline,
+                cropToCutline = True,
+                srcNodata=0,
+                dstNodata=0
+                )
+
+        raster_file = in_mem_tif
+
+    gdal_ds = gdal.Open(raster_file)
+    proj_wkt = gdal_ds.GetProjection()
+    geotransform = gdal_ds.GetGeoTransform()
+    gdal_ds = None
+    if cutline is not None:
+        gdal.Unlink(raster_file)
+
+    return  (proj_wkt,geotransform)
+
+def calc_ndvi_as_image_from_mem (array_red, array_nir, uint8_adjust = True):
+
+    array_ndvi = np.full(array_red.shape,0,np.ubyte if uint8_adjust else np.float)
+
+    red_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
+    nir_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
+    tmp1_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
+    tmp2_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
+    #tmp3_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.ubyte)
+    #print ((len(array_ndvi),len(array_nir)))
+    for i in range( 0, len(array_nir) ):
+        np.copyto(dst=red_vec, src=array_red[i])
+        np.copyto(dst=nir_vec, src=array_nir[i])
+        np.subtract(nir_vec, red_vec, out=tmp1_vec)
+        np.multiply(tmp1_vec, 100.0, out=tmp1_vec)
+        np.add(nir_vec, red_vec, out=tmp2_vec)
+        tmp1_vec = np.divide(tmp1_vec, tmp2_vec, out=np.zeros_like(tmp1_vec), where=(tmp2_vec != 0))
+        if (uint8_adjust) :
+            array_ndvi[i] = np.add(tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe', 
+                                out=np.zeros_like(array_ndvi[i]), 
+                                where=(nir_vec!=0))
+        else:
+            array_ndvi[i] = tmp1_vec
+       
+    return array_ndvi
+
+def calc_ndvi_as_image (red_band_file, nir_band_file, uint8_adjust = True):
+  #create output:
     # - the same srs, pixel size as input bands
     # - pixel size = byte
     # - ndvi formulae = 101 + 100*ndvi
@@ -88,54 +164,42 @@ def create_ndvi_file (red_band_file, nir_band_file, output_file) :
         print('ERROR: can\'t open file: ' + red_band_file)
         exit(1)
 
-    array_ndvi = np.full((ds_nir.RasterYSize,ds_nir.RasterXSize),0,np.ubyte)
+    #array_ndvi = np.full((ds_nir.RasterYSize,ds_nir.RasterXSize),0,np.ubyte)
     band_nir = ds_nir.GetRasterBand(1)
     band_red = ds_red.GetRasterBand(1)
     array_nir = band_nir.ReadAsArray()
     array_red = band_red.ReadAsArray()
 
+    array_ndvi = calc_ndvi_as_image_from_mem(array_red,array_nir,uint8_adjust)
+    
+    # close dataset
+    ds_red = None
+    ds_nir = None
+    array_nir = None
+    array_red = None
+
+    return array_ndvi
+
+
+def create_ndvi_uint8_file (red_band_file, nir_band_file, output_file) :
+    #create output:
+    # - the same srs, pixel size as input bands
+    # - pixel size = byte
+    # - ndvi formulae = 101 + 100*ndvi
+    # open dataset
+    ds_nir = gdal.Open(nir_band_file)
+
+    if ds_nir is None:
+        print('ERROR: can\'t open file: ' + nir_band_file)
+        exit(1)
+
     prj_wkt=ds_nir.GetProjection()
     geotr = ds_nir.GetGeoTransform()
 
+    ndvi_img = calc_ndvi_as_image(red_band_file, nir_band_file,True)
     
-    red_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.float)
-    nir_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.float)
-    tmp1_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.float)
-    tmp2_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.float)
-    #tmp3_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.ubyte)
-    print ((len(array_ndvi),len(array_nir)))
-    for i in range( 0, len(array_nir) ):
-        np.copyto(dst=red_vec, src=array_red[i])
-        np.copyto(dst=nir_vec, src=array_nir[i])
-        np.subtract(nir_vec, red_vec, out=tmp1_vec)
-        np.multiply(tmp1_vec, 100.0, out=tmp1_vec)
-        np.add(nir_vec, red_vec, out=tmp2_vec)
-        tmp1_vec = np.divide(tmp1_vec, tmp2_vec, out=np.zeros_like(tmp1_vec), where=(tmp2_vec != 0))
-        #np.add(tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe', out=array_ndvi[i])
-        array_ndvi[i] = np.add(tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe', 
-                                out=np.zeros_like(array_ndvi[i]), 
-                                where=(nir_vec!=0))
-        #tmp3_vec = np.zeros_like(tmp3_vec)
-        #np.copto(dst=tmp3_vec, src=np._ones_like(tmp3_vec), where=())
-
-       
-
-
-    """
-    for i in range(0,len(array_nir)):
-        for j in range(0,len(array_nir[i])):
-            if (not array_nir[i][j]==0) and (not array_red[i][j]==0):
-                array_ndvi[i][j] = (101.5 + 100.0*(float(array_nir[i][j])-float(array_red[i][j]))/
-                                                    (float(array_red[i][j])+float(array_nir[i][j])))
-            else: array_ndvi[i][j] = 0
-              
-    """
-    
-    array2raster(output_file,[geotr[0],geotr[3]],geotr[1],-geotr[1],prj_wkt,array_ndvi)
+    array2georaster(output_file,[geotr[0],geotr[3]],geotr[1],prj_wkt,ndvi_img)
 
     # close dataset
-    ds_red = None
-    ds_nir = NotImplemented
-    array_ndvi = None
-    array_nir = None
-    array_red = None
+    ds_nir = None
+    ndvi_img = None
