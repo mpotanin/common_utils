@@ -12,7 +12,47 @@ from common_utils import vector_operations as vop
 # seed random number generator
 seed(1)
 
-def open_raster_as_image (input_band_file, cutline) :
+def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max, lat_max, utm_zone = None):
+    #calc EPSG code based on UTM zone
+    if utm_zone is None:
+        utm_zone = int((0.5*(long_min + long_max) + 180)/6) + 1
+    
+    epsg_code = 100*(326 if (lat_min + lat_max >= 0) else 327) + utm_zone
+    
+
+    #calc UTM XY BBOX
+    latlongSpatialRef = osr.SpatialReference()
+    latlongSpatialRef.ImportFromEPSG(4326)
+
+    utmSpatialRef = osr.SpatialReference()
+    utmSpatialRef.ImportFromEPSG(epsg_code)
+
+    coordTrans = osr.CoordinateTransformation(latlongSpatialRef, utmSpatialRef)
+
+    point_ll = ogr.Geometry(ogr.wkbPoint)
+    point_ll.AddPoint(lat_min,long_min)
+    point_ll.Transform(coordTrans)
+
+    point_ur = ogr.Geometry(ogr.wkbPoint)
+    point_ur.AddPoint(lat_max,long_max)
+    point_ur.Transform(coordTrans)
+            
+    #N1 calc pixel size
+    gdal_ds = gdal.Open(input_preview)
+    w,h = gdal_ds.RasterXSize,gdal_ds.RasterYSize
+
+    pixel_size = (0.5 *  ( ( (point_ur.GetX()-point_ll.GetX() )/w) + 
+                          ( (point_ur.GetY()-point_ll.GetY() )/h) ) )
+    
+    #img = gdal_ds.ReadAsArray()
+    array2geotiff(output_geotiff,
+                    (point_ll.GetX(),point_ur.GetY()),
+                    pixel_size,
+                    utmSpatialRef.ExportToWkt(),
+                    gdal_ds.ReadAsArray())
+
+
+def open_clipped_raster_as_image (input_band_file, cutline) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
     gdal.Warp(in_mem_tiff,
             [input_band_file],
@@ -62,7 +102,7 @@ def generate_virtual_random_tif_path ():
     return '/vsimem/memory_name' + str(random()) + '.tif'
 
 
-def crop_raster_file_to_cutline (input_raster, output_tiff, vector_file, src_ndv=None, dst_ndv = None):
+def crop_to_cutline (input_raster, output_tiff, vector_file, src_ndv=None, dst_ndv = None):
     return gdal.Warp(output_tiff,
                 input_raster,
                 format = 'GTiff',
@@ -74,9 +114,17 @@ def crop_raster_file_to_cutline (input_raster, output_tiff, vector_file, src_ndv
 
 
 
-def array2georaster(newRasterfn,rasterOrigin,pixel_size,prj_wkt,array):
+def array2geotiff(output_geotiff,rasterOrigin,pixel_size,prj_wkt,array):
 
-    rows,cols = array.shape[0],array.shape[1]
+    array_ref = None
+    if (array.ndim == 2) :
+        array_ref = list()
+        array_ref.append(array)
+    else: array_ref = array
+   
+    bands_num = 1 if (array.ndim==2) else array.shape[0]
+
+    rows,cols = array_ref[0].shape[0],array_ref[0].shape[1]
     originX,originY = rasterOrigin[0],rasterOrigin[1]
 
     driver = gdal.GetDriverByName('GTiff')
@@ -87,16 +135,19 @@ def array2georaster(newRasterfn,rasterOrigin,pixel_size,prj_wkt,array):
                     np.int32:gdal.GDT_Int32,
                     np.uint32:gdal.GDT_UInt32,
                     np.float:gdal.GDT_Float32,
-                    np.float64:gdal.GDT_Float32}[type(array[0][0])]
-    
- 
+                    np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
+     
 
-    outRaster = driver.Create(newRasterfn, cols, rows, 1, output_type)
+    outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
-    outband = outRaster.GetRasterBand(1)
-    outband.WriteArray(array)
     outRaster.SetProjection(prj_wkt)
-    outband.FlushCache()
+    for b in range(bands_num):
+        outband = outRaster.GetRasterBand(b+1)
+        outband.WriteArray(array_ref[b])
+        outband.FlushCache()
+    arra_ref = None 
+    outRaster = None
+
 
 def extract_georeference (raster_file, cutline = None):
     if cutline is not None:
@@ -198,7 +249,7 @@ def create_ndvi_uint8_file (red_band_file, nir_band_file, output_file) :
 
     ndvi_img = calc_ndvi_as_image(red_band_file, nir_band_file,True)
     
-    array2georaster(output_file,[geotr[0],geotr[3]],geotr[1],prj_wkt,ndvi_img)
+    array2geotiff(output_file,[geotr[0],geotr[3]],geotr[1],prj_wkt,ndvi_img)
 
     # close dataset
     ds_nir = None
