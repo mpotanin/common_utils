@@ -52,10 +52,10 @@ def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max,
                     gdal_ds.ReadAsArray())
 
 
-def open_clipped_raster_as_image (input_band_file, cutline) :
+def open_clipped_raster_as_image (raster_file, cutline) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
     gdal.Warp(in_mem_tiff,
-            [input_band_file],
+            [raster_file],
             format = 'GTiff',
             cutlineDSName = None if cutline is None else cutline,
             cropToCutline = True,
@@ -134,7 +134,7 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,prj_wkt,array):
                     np.int16:gdal.GDT_Int16,
                     np.int32:gdal.GDT_Int32,
                     np.uint32:gdal.GDT_UInt32,
-                    np.float:gdal.GDT_Float32,
+                    np.float32:gdal.GDT_Float32,
                     np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
      
 
@@ -145,7 +145,7 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,prj_wkt,array):
         outband = outRaster.GetRasterBand(b+1)
         outband.WriteArray(array_ref[b])
         outband.FlushCache()
-    arra_ref = None 
+    array_ref = None 
     outRaster = None
 
 
@@ -194,7 +194,7 @@ def calc_ndvi_as_image_from_mem (array_red, array_nir, uint8_adjust = True):
                                 out=np.zeros_like(array_ndvi[i]), 
                                 where=(nir_vec!=0))
         else:
-            array_ndvi[i] = tmp1_vec
+            array_ndvi[i] = (tmp1_vec*0.01)
        
     return array_ndvi
 
