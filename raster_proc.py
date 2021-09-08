@@ -51,23 +51,38 @@ def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max,
                     utmSpatialRef.ExportToWkt(),
                     gdal_ds.ReadAsArray())
 
-
-def open_clipped_raster_as_image (raster_file, cutline) :
+def get_clipped_inmem_raster (raster_file, 
+                            cutline = None, 
+                            dst_nodata = None,
+                            cutline_where = None,
+                            crop_to_cutline = True) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
     gdal.Warp(in_mem_tiff,
             [raster_file],
             format = 'GTiff',
-            cutlineDSName = None if cutline is None else cutline,
-            cropToCutline = True,
-            srcNodata=0,
-            dstNodata=0
+            cutlineDSName = cutline,
+            cutlineWhere = cutline_where,
+            dstNodata = dst_nodata,
+            cropToCutline = crop_to_cutline,
+            srcNodata=0
             )
+    return in_mem_tiff
+
+def open_clipped_raster_as_image (raster_file, 
+                                cutline = None, 
+                                dst_nodata = None, 
+                                cutline_where = None,
+                                crop_to_cutline = True) :
+    
+    in_mem_tiff = get_clipped_inmem_raster (raster_file,
+                                            cutline,
+                                            dst_nodata,
+                                            cutline_where,
+                                            crop_to_cutline)
     ds_obj = gdal.Open(in_mem_tiff)
     band_obj = ds_obj.GetRasterBand(1)
     img_obj = band_obj.ReadAsArray()
-
     gdal.Unlink(in_mem_tiff)
-
     return img_obj
 
 def get_raster_bbox (raster_file, t_srs = None) :
@@ -102,19 +117,27 @@ def generate_virtual_random_tif_path ():
     return '/vsimem/memory_name' + str(random()) + '.tif'
 
 
-def crop_to_cutline (input_raster, output_tiff, vector_file, src_ndv=None, dst_ndv = None):
+def crop_to_cutline (input_raster, 
+                    output_tiff, 
+                    vector_file, 
+                    src_nodata=None, 
+                    dst_nodata = None,
+                    cutline_where = None,
+                    crop_to_cutline = True):
+
     return gdal.Warp(output_tiff,
                 input_raster,
                 format = 'GTiff',
                 cutlineDSName = vector_file,
-                cropToCutline = True,
-                srcNodata=src_ndv,
-                dstNodata=dst_ndv
+                cropToCutline = crop_to_cutline,
+                srcNodata=src_nodata,
+                dstNodata=dst_nodata,
+                cutlineWhere = cutline_where
                 )
 
 
 
-def array2geotiff(output_geotiff,rasterOrigin,pixel_size,prj_wkt,array):
+def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = None):
 
     array_ref = None
     if (array.ndim == 2) :
@@ -140,10 +163,13 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,prj_wkt,array):
 
     outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
-    outRaster.SetProjection(prj_wkt)
+    #outRaster.SetProjection(prj_wkt)
+    outRaster.SetSpatialRef(srs)
     for b in range(bands_num):
         outband = outRaster.GetRasterBand(b+1)
         outband.WriteArray(array_ref[b])
+        if nodata_val is not None:
+            outband.SetNoDataValue(nodata_val)
         outband.FlushCache()
     array_ref = None 
     outRaster = None
@@ -164,13 +190,14 @@ def extract_georeference (raster_file, cutline = None):
         raster_file = in_mem_tif
 
     gdal_ds = gdal.Open(raster_file)
-    proj_wkt = gdal_ds.GetProjection()
+    #proj_wkt = gdal_ds.GetProjection()
+    srs = gdal_ds.GetSpatialRef().Clone()
     geotransform = gdal_ds.GetGeoTransform()
     gdal_ds = None
     if cutline is not None:
         gdal.Unlink(raster_file)
 
-    return  (proj_wkt,geotransform)
+    return  (srs,geotransform)
 
 def calc_ndvi_as_image_from_mem (array_red, array_nir, uint8_adjust = True):
 

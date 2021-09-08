@@ -71,11 +71,10 @@ class BBOX :
         feat = None
         return bbox
 
-class vector_file:
+class VectorFile:
 
     @staticmethod
-    def get_all_geometry_in_wkt (vector_file, t_srs = None):
-
+    def get_all_features (vector_file, t_srs = None, column_name_filt = None, value_filt = None):
         ds = gdal.OpenEx(vector_file, gdal.OF_VECTOR )
         #ds = ogr.Open(vector_file)
         if ds is None:
@@ -86,7 +85,18 @@ class vector_file:
                 
         #source_srs = lyr.GetSpatialRef()
 
+        srs_4326 = osr.SpatialReference()
+        srs_4326.ImportFromEPSG(4326)
+        if int(osgeo.__version__[0]) >= 3:
+            # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
+            srs_4326.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+
         coordTrans = 0
+        t_srs = srs_4326 if not t_srs else t_srs
+        s_srs = srs_4326 if not lyr.GetSpatialRef() else lyr.GetSpatialRef()
+        coordTrans = osr.CoordinateTransformation(s_srs, t_srs)
+
+        """
         if not t_srs :
             t_srs = osr.SpatialReference()
             t_srs.ImportFromEPSG(4326)
@@ -95,9 +105,15 @@ class vector_file:
             # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
             t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
        
-
-        coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
+        if lyr.GetSpatialRef(): 
+            coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
                                                         t_srs)
+        else :
+            s_srs = osr.SpatialReference()
+            s_srs.ImportFromEPSG(4326)
+            coordTrans = osr.CoordinateTransformation(lyr.GetSpatialRef(), 
+                                                        t_srs)
+        """
     
         output = list()
 
@@ -105,9 +121,27 @@ class vector_file:
         lyr.ResetReading()
         for fid in range(0,feat_count):
             feat = lyr.GetNextFeature()
+            if column_name_filt is not None and value_filt is not None:
+                if feat.GetFieldAsString(column_name_filt) != value_filt:
+                    continue
             geom = feat.GetGeometryRef()
             geom.Transform(coordTrans)
+            output.append(feat)
+
+        ds = None
+        return output  
+
+    @staticmethod
+    def get_all_geometry_in_wkt (vector_file, t_srs = None, column_name_filt = None, value_filt = None):
+
+        features = VectorFile.get_all_features(vector_file,t_srs,column_name_filt,value_filt)
+        output = list()
+
+        fid = 0
+        for feat in features:
+            geom = feat.GetGeometryRef()
             output.append((fid,geom.ExportToWkt()))
+            fid+=1
 
         ds = None
         return output  
@@ -155,7 +189,7 @@ class vector_file:
     @staticmethod
     def create_virtual_vector_file (wkt_polygeom, srs=None) :
         virtual_path = '/vsimem/memory_name' + str(random()) + '.shp'
-        return virtual_path if vector_file.create_vector_file(wkt_polygeom,virtual_path,srs) else ''
+        return virtual_path if VectorFile.create_vector_file(wkt_polygeom,virtual_path,srs) else ''
 
 #def create_virtual_vector_ds_from_bbox (bbox,srs):
 #    return create_virtual_vector_ds_from_polygon(srs)
