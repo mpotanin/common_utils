@@ -163,8 +163,12 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = 
 
     outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
-    #outRaster.SetProjection(prj_wkt)
-    outRaster.SetSpatialRef(srs)
+    
+    
+    #outRaster.SetSpatialRef(srs) - fails for unknown reason
+    prj_wkt = srs.ExportToWkt()
+    outRaster.SetProjection(prj_wkt)
+    
     for b in range(bands_num):
         outband = outRaster.GetRasterBand(b+1)
         outband.WriteArray(array_ref[b])
@@ -189,9 +193,13 @@ def extract_georeference (raster_file, cutline = None):
 
         raster_file = in_mem_tif
 
+    
     gdal_ds = gdal.Open(raster_file)
-    #proj_wkt = gdal_ds.GetProjection()
-    srs = gdal_ds.GetSpatialRef().Clone()
+    
+    #srs = gdal_ds.GetSpatialRef().Clone() - fails for unknown reason
+    srs = osr.SpatialReference(gdal_ds.GetProjection())
+
+        
     geotransform = gdal_ds.GetGeoTransform()
     gdal_ds = None
     if cutline is not None:
