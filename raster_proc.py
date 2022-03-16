@@ -136,6 +136,14 @@ def crop_to_cutline (input_raster,
                 )
 
 
+def get_statistics(single_band_raster):
+    gdal_ds = gdal.Open(single_band_raster)
+    if gdal_ds is None: return None
+
+    stat = gdal_ds.GetRasterBand(1).GetStatistics(False,True)
+    gdal_ds = None
+
+    return stat
 
 def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = None):
 
@@ -207,33 +215,39 @@ def extract_georeference (raster_file, cutline = None):
 
     return  (srs,geotransform)
 
-def calc_ndvi_as_image_from_mem (array_red, array_nir, uint8_adjust = True):
+def calc_ndvi_as_image_from_mem (array_red,
+                                 array_nir,
+                                 ndv_in = 0,
+                                 ndv_out = -10000,
+                                 uint8_adjust = False):
+    ndv_out = 0 if uint8_adjust else ndv_out
 
-    array_ndvi = np.full(array_red.shape,0,np.ubyte if uint8_adjust else np.float)
+    array_ndvi = np.full(array_red.shape,ndv_out,np.ubyte if uint8_adjust else np.float)
 
-    red_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
-    nir_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
-    tmp1_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
-    tmp2_vec = np.full(array_red.shape[1], fill_value=0, dtype=np.float)
-    #tmp3_vec = np.full(shape=(ds_nir.RasterXSize), fill_value=0, dtype=np.ubyte)
-    #print ((len(array_ndvi),len(array_nir)))
+    red_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
+    nir_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
+    tmp1_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
+    tmp2_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
+
     for i in range( 0, len(array_nir) ):
         np.copyto(dst=red_vec, src=array_red[i])
         np.copyto(dst=nir_vec, src=array_nir[i])
         np.subtract(nir_vec, red_vec, out=tmp1_vec)
-        np.multiply(tmp1_vec, 100.0, out=tmp1_vec)
         np.add(nir_vec, red_vec, out=tmp2_vec)
-        tmp1_vec = np.divide(tmp1_vec, tmp2_vec, out=np.zeros_like(tmp1_vec), where=(tmp2_vec != 0))
+        tmp1_vec = np.divide(tmp1_vec, tmp2_vec,
+                             out=np.full(tmp1_vec.shape,fill_value=ndv_out, dtype=np.float),
+                             where=np.logical_or(red_vec!=ndv_in,nir_vec!=ndv_in))
         if (uint8_adjust) :
-            array_ndvi[i] = np.add(tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe', 
-                                out=np.zeros_like(array_ndvi[i]), 
-                                where=(nir_vec!=0))
+            array_ndvi[i] = np.add(100*tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe',
+                                out=np.zeros_like(tmp1_vec),
+                                where=(tmp1_vec!=0))
         else:
-            array_ndvi[i] = (tmp1_vec*0.01)
+            array_ndvi[i] = tmp1_vec
        
     return array_ndvi
 
-def calc_ndvi_as_image (red_band_file, nir_band_file, uint8_adjust = True):
+def calc_ndvi_as_image (red_band_file, nir_band_file,
+                        ndv_in=None, ndv_out=-10000, uint8_adjust = False):
   #create output:
     # - the same srs, pixel size as input bands
     # - pixel size = byte
@@ -256,7 +270,11 @@ def calc_ndvi_as_image (red_band_file, nir_band_file, uint8_adjust = True):
     array_nir = band_nir.ReadAsArray()
     array_red = band_red.ReadAsArray()
 
-    array_ndvi = calc_ndvi_as_image_from_mem(array_red,array_nir,uint8_adjust)
+    if ndv_in is None:
+        ndv_in = 0 if band_nir.GetNoDataValue() is None else band_nir.GetNoDataValue()
+
+
+    array_ndvi = calc_ndvi_as_image_from_mem(array_red,array_nir,ndv_in,ndv_out, uint8_adjust)
     
     # close dataset
     ds_red = None
