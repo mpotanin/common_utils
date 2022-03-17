@@ -191,5 +191,13 @@ class VectorFile:
         virtual_path = '/vsimem/memory_name' + str(random()) + '.shp'
         return virtual_path if VectorFile.create_vector_file(wkt_polygeom,virtual_path,srs) else ''
 
+    @staticmethod
+    def remove_virtual_vector_file (in_mem_vec_file:str):
+        gdal.Unlink(in_mem_vec_file)
+        if in_mem_vec_file.endswith('.shp'):
+            gdal.Unlink(in_mem_vec_file.replace('.shp','.shx'))
+            gdal.Unlink(in_mem_vec_file.replace('.shp', '.prj'))
+            gdal.Unlink(in_mem_vec_file.replace('.shp', '.dbf'))
+
 #def create_virtual_vector_ds_from_bbox (bbox,srs):
 #    return create_virtual_vector_ds_from_polygon(srs)
