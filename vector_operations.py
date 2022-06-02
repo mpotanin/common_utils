@@ -13,7 +13,9 @@ from osgeo import osr
 from random import seed
 from random import random
 # seed random number generator
-seed(1)
+import time
+
+seed(time.time() * 1000)
 
 
 

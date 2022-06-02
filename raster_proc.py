@@ -9,8 +9,8 @@ from random import seed
 from random import random
 from common_utils import vector_operations as vop
 
-# seed random number generator
-seed(1)
+import time
+seed(time.time() * 1000)
 
 def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max, lat_max, utm_zone = None):
     #calc EPSG code based on UTM zone
@@ -55,30 +55,51 @@ def get_clipped_inmem_raster (raster_file,
                             cutline = None, 
                             dst_nodata = None,
                             cutline_where = None,
-                            crop_to_cutline = True) :
+                            crop_to_cutline = True,
+                            pixel_width=None,
+                            pixel_height=None,
+                              ) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
-    gdal.Warp(in_mem_tiff,
-            [raster_file],
-            format = 'GTiff',
-            cutlineDSName = cutline,
-            cutlineWhere = cutline_where,
-            dstNodata = dst_nodata,
-            cropToCutline = crop_to_cutline,
-            srcNodata=0
-            )
+    if pixel_height is None:
+        gdal.Warp(in_mem_tiff,
+                [raster_file],
+                format = 'GTiff',
+                cutlineDSName = cutline,
+                cutlineWhere = cutline_where,
+                dstNodata = dst_nodata,
+                cropToCutline = crop_to_cutline,
+                srcNodata=0
+                )
+    else:
+        gdal.Warp(in_mem_tiff,
+                [raster_file],
+                format = 'GTiff',
+                cutlineDSName = cutline,
+                cutlineWhere = cutline_where,
+                dstNodata = dst_nodata,
+                cropToCutline = crop_to_cutline,
+                width=pixel_width,
+                height=pixel_height,
+                srcNodata=0
+                )
     return in_mem_tiff
 
 def open_clipped_raster_as_image (raster_file, 
                                 cutline = None, 
                                 dst_nodata = None, 
                                 cutline_where = None,
-                                crop_to_cutline = True) :
+                                crop_to_cutline = True,
+                                pixel_width = None,
+                                pixel_height = None,
+                                  ) :
     
     in_mem_tiff = get_clipped_inmem_raster (raster_file,
                                             cutline,
                                             dst_nodata,
                                             cutline_where,
-                                            crop_to_cutline)
+                                            crop_to_cutline,
+                                            pixel_width,
+                                            pixel_height)
     ds_obj = gdal.Open(in_mem_tiff)
     band_obj = ds_obj.GetRasterBand(1)
     img_obj = band_obj.ReadAsArray()
@@ -140,12 +161,13 @@ def get_statistics(single_band_raster):
     gdal_ds = gdal.Open(single_band_raster)
     if gdal_ds is None: return None
 
+    #min,max,mean,stdDev
     stat = gdal_ds.GetRasterBand(1).GetStatistics(False,True)
     gdal_ds = None
 
     return stat
 
-def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = None):
+def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_val = None, compress = None):
 
     array_ref = None
     if (array.ndim == 2) :
@@ -169,7 +191,10 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = 
                     np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
      
 
-    outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
+    #out = outDrv.Create("outfile.tif", gscl.RasterXSize, gscl.RasterYSize, 1, gdalconst.GDT_UInt16,  [ 'COMPRESS=LZW' ] ) 
+    outRaster = (driver.Create(output_geotiff, cols, rows, bands_num, output_type) if compress is None 
+                  else driver.Create(output_geotiff, cols, rows, bands_num, output_type, [ f'COMPRESS={compress}' ]))
+                
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
     
     
