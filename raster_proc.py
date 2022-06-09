@@ -51,6 +51,8 @@ def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max,
                     utmSpatialRef.ExportToWkt(),
                     gdal_ds.ReadAsArray())
 
+
+
 def get_clipped_inmem_raster (raster_file, 
                             cutline = None, 
                             dst_nodata = None,
@@ -58,30 +60,17 @@ def get_clipped_inmem_raster (raster_file,
                             crop_to_cutline = True,
                             pixel_width=None,
                             pixel_height=None,
+                            output_bounds=None,
+                            output_type = None,
+                            dst_srs = None,
+                            pixel_res = None,
+                            resample_alg = None
                               ) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
-    if pixel_height is None:
-        gdal.Warp(in_mem_tiff,
-                [raster_file],
-                format = 'GTiff',
-                cutlineDSName = cutline,
-                cutlineWhere = cutline_where,
-                dstNodata = dst_nodata,
-                cropToCutline = crop_to_cutline,
-                srcNodata=0
-                )
-    else:
-        gdal.Warp(in_mem_tiff,
-                [raster_file],
-                format = 'GTiff',
-                cutlineDSName = cutline,
-                cutlineWhere = cutline_where,
-                dstNodata = dst_nodata,
-                cropToCutline = crop_to_cutline,
-                width=pixel_width,
-                height=pixel_height,
-                srcNodata=0
-                )
+    warp(raster_file=raster_file,output_tiff=in_mem_tiff,cutline=cutline,dst_nodata=dst_nodata,
+         cutline_where=cutline_where,crop_to_cutline=crop_to_cutline,pixel_width=pixel_width,pixel_height=pixel_height,
+         output_type=output_type,output_bounds=output_bounds,dst_srs=dst_srs,pixel_res=pixel_res,resample_alg=resample_alg)
+
     return in_mem_tiff
 
 def open_clipped_raster_as_image (raster_file, 
@@ -91,33 +80,51 @@ def open_clipped_raster_as_image (raster_file,
                                 crop_to_cutline = True,
                                 pixel_width = None,
                                 pixel_height = None,
+                                output_bounds = None,
+                                output_type = None,
+                                dst_srs = None,
+                                pixel_res = None,
+                                resample_alg = None
                                   ) :
-    
-    in_mem_tiff = get_clipped_inmem_raster (raster_file,
-                                            cutline,
-                                            dst_nodata,
-                                            cutline_where,
-                                            crop_to_cutline,
-                                            pixel_width,
-                                            pixel_height)
-    ds_obj = gdal.Open(in_mem_tiff)
-    band_obj = ds_obj.GetRasterBand(1)
-    img_obj = band_obj.ReadAsArray()
-    gdal.Unlink(in_mem_tiff)
-    return img_obj
+    in_mem_tiff = None
+    if any(arg is not None for arg in [cutline,dst_nodata,pixel_width,pixel_height,dst_srs,pixel_res,resample_alg]):
+        in_mem_tiff = get_clipped_inmem_raster (raster_file,
+                                                cutline,
+                                                dst_nodata,
+                                                cutline_where,
+                                                crop_to_cutline,
+                                                pixel_width,
+                                                pixel_height,
+                                                output_bounds,
+                                                output_type,
+                                                dst_srs,
+                                                pixel_res,
+                                                resample_alg)
+
+    raster_file = in_mem_tiff if in_mem_tiff is not None else raster_file
+
+    gdal_ds = gdal.Open(raster_file)
+    gdal_band = gdal_ds.GetRasterBand(1)
+    img = gdal_band.ReadAsArray()
+
+    gdal_ds_obj = None
+    if in_mem_tiff is not None:
+        gdal.Unlink(in_mem_tiff)
+
+    return img
 
 def get_raster_bbox (raster_file, t_srs = None) :
     gdal_ds = gdal.Open(raster_file)
     if not gdal_ds :
         return None
+
+    #assume north up image
     geotr = gdal_ds.GetGeoTransform()
+    ul_lr = ogr.Geometry(ogr.wkbLineString)
+    ul_lr.AddPoint(geotr[0],geotr[3]) #add upper left corner of image
+    ul_lr.AddPoint(geotr[0] + geotr[1]*gdal_ds.RasterXSize,
+                    geotr[3] + geotr[5]*gdal_ds.RasterYSize ) #calc. lower right corner of image
 
-
-    ulp = ogr.Geometry(ogr.wkbPoint)
-    ulp.AddPoint(geotr[0],geotr[3])
-    lrp = ogr.Geometry(ogr.wkbPoint)
-    lrp.AddPoint(geotr[0] + geotr[1]*gdal_ds.RasterXSize,
-                    geotr[3] - geotr[1]*gdal_ds.RasterYSize )
 
     if t_srs:
         if int(osgeo.__version__[0]) >= 3:
@@ -125,12 +132,13 @@ def get_raster_bbox (raster_file, t_srs = None) :
             t_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
         raster_srs=osr.SpatialReference(wkt=gdal_ds.GetProjection())
         coordTrans = osr.CoordinateTransformation(raster_srs,t_srs)
-        ulp.Transform(coordTrans)
-        lrp.Transform(coordTrans)
-    
+        #ulp.Transform(coordTrans)
+        #lrp.Transform(coordTrans)
+        ul_lr.Transform(coordTrans)
     gdal_ds = None
 
-    return vop.BBOX(ulp.GetX(),lrp.GetY(),lrp.GetX(),ulp.GetY())
+    return ul_lr.GetEnvelope()
+
 
 
 
@@ -138,23 +146,39 @@ def generate_virtual_random_tif_path ():
     return '/vsimem/memory_name' + str(random()) + '.tif'
 
 
-def crop_to_cutline (input_raster, 
-                    output_tiff, 
-                    vector_file, 
-                    src_nodata=None, 
-                    dst_nodata = None,
-                    cutline_where = None,
-                    crop_to_cutline = True):
+def warp   (raster_file,
+            output_tiff,
+            cutline = None,
+            src_nodata = None,
+            dst_nodata = None,
+            cutline_where = None,
+            crop_to_cutline = True,
+            pixel_width=None,
+            pixel_height=None,
+            output_bounds = None,
+            output_type= None,
+            dst_srs = None,
+            pixel_res = None,
+            resample_alg = None
+            ):
 
     return gdal.Warp(output_tiff,
-                input_raster,
-                format = 'GTiff',
-                cutlineDSName = vector_file,
-                cropToCutline = crop_to_cutline,
-                srcNodata=src_nodata,
-                dstNodata=dst_nodata,
-                cutlineWhere = cutline_where
-                )
+              [raster_file],
+              format='GTiff',
+              cutlineDSName=cutline,
+              cutlineWhere=cutline_where,
+              dstNodata=dst_nodata,
+              width=pixel_width,
+              height=pixel_height,
+              cropToCutline= crop_to_cutline,
+              outputBounds = output_bounds,
+              srcNodata=src_nodata,
+              dstSRS=dst_srs,
+              resampleAlg=resample_alg,
+              outputType = output_type,
+              xRes=pixel_res,
+              yRes=pixel_res
+              )
 
 
 def get_statistics(single_band_raster):
@@ -167,7 +191,7 @@ def get_statistics(single_band_raster):
 
     return stat
 
-def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_val = None, compress = None):
+def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = None):
 
     array_ref = None
     if (array.ndim == 2) :
@@ -191,10 +215,7 @@ def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_v
                     np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
      
 
-    #out = outDrv.Create("outfile.tif", gscl.RasterXSize, gscl.RasterYSize, 1, gdalconst.GDT_UInt16,  [ 'COMPRESS=LZW' ] ) 
-    outRaster = (driver.Create(output_geotiff, cols, rows, bands_num, output_type) if compress is None 
-                  else driver.Create(output_geotiff, cols, rows, bands_num, output_type, [ f'COMPRESS={compress}' ]))
-                
+    outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
     
     
