@@ -268,12 +268,12 @@ def calc_ndvi_as_image_from_mem (array_red,
                                  uint8_adjust = False):
     ndv_out = 0 if uint8_adjust else ndv_out
 
-    array_ndvi = np.full(array_red.shape,ndv_out,np.ubyte if uint8_adjust else np.float)
+    array_ndvi = np.full(array_red.shape,ndv_out,np.ubyte if uint8_adjust else np.float32)
 
-    red_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
-    nir_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
-    tmp1_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
-    tmp2_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float)
+    red_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float32)
+    nir_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float32)
+    tmp1_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float32)
+    tmp2_vec = np.full(array_red.shape[1], fill_value=ndv_in, dtype=np.float32)
 
     for i in range( 0, len(array_nir) ):
         np.copyto(dst=red_vec, src=array_red[i])
@@ -281,7 +281,7 @@ def calc_ndvi_as_image_from_mem (array_red,
         np.subtract(nir_vec, red_vec, out=tmp1_vec)
         np.add(nir_vec, red_vec, out=tmp2_vec)
         tmp1_vec = np.divide(tmp1_vec, tmp2_vec,
-                             out=np.full(tmp1_vec.shape,fill_value=ndv_out, dtype=np.float),
+                             out=np.full(tmp1_vec.shape,fill_value=ndv_out, dtype=np.float32),
                              where=np.logical_or(red_vec!=ndv_in,nir_vec!=ndv_in))
         if (uint8_adjust) :
             array_ndvi[i] = np.add(100*tmp1_vec, 101.5, dtype=np.ubyte, casting='unsafe',
