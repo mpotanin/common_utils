@@ -191,7 +191,8 @@ def get_statistics(single_band_raster):
 
     return stat
 
-def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = None):
+
+def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_val = None, compress=None):
 
     array_ref = None
     if (array.ndim == 2) :
@@ -205,7 +206,6 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = 
     originX,originY = rasterOrigin[0],rasterOrigin[1]
 
     driver = gdal.GetDriverByName('GTiff')
-
     output_type = {np.uint8:gdal.GDT_Byte,
                     np.uint16:gdal.GDT_UInt16,
                     np.int16:gdal.GDT_Int16,
@@ -213,9 +213,9 @@ def array2geotiff(output_geotiff,rasterOrigin,pixel_size,srs,array,nodata_val = 
                     np.uint32:gdal.GDT_UInt32,
                     np.float32:gdal.GDT_Float32,
                     np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
-     
-
-    outRaster = driver.Create(output_geotiff, cols, rows, bands_num, output_type)
+    options = [f'COMPRESS={compress}'] if compress is not None else None
+    outRaster = (driver.Create(output_geotiff, cols, rows, bands_num, output_type) if options is None
+                else driver.Create(output_geotiff, cols, rows, bands_num, output_type, options = options) )
     outRaster.SetGeoTransform((originX, pixel_size, 0, originY, 0, -pixel_size))
     
     
