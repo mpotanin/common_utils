@@ -12,6 +12,7 @@ from common_utils import vector_operations as vop
 import time
 seed(time.time() * 1000)
 
+
 def preview2geotiff (input_preview, output_geotiff, long_min, lat_min, long_max, lat_max, utm_zone = None):
     #calc EPSG code based on UTM zone
     if utm_zone is None:
@@ -64,10 +65,12 @@ def get_clipped_inmem_raster (raster_file,
                             output_type = None,
                             dst_srs = None,
                             pixel_res = None,
-                            resample_alg = None
+                            resample_alg = None,
+                            src_nodata=None
                               ) :
     in_mem_tiff = os.path.join('/vsimem',str(random()) + '.tif')
-    warp(raster_file=raster_file,output_tiff=in_mem_tiff,cutline=cutline,dst_nodata=dst_nodata,
+
+    warp(raster_file=raster_file,output_tiff=in_mem_tiff,cutline=cutline,dst_nodata=dst_nodata,src_nodata=src_nodata,
          cutline_where=cutline_where,crop_to_cutline=crop_to_cutline,pixel_width=pixel_width,pixel_height=pixel_height,
          output_type=output_type,output_bounds=output_bounds,dst_srs=dst_srs,pixel_res=pixel_res,resample_alg=resample_alg)
 
@@ -75,7 +78,7 @@ def get_clipped_inmem_raster (raster_file,
 
 def open_clipped_raster_as_image (raster_file, 
                                 cutline = None, 
-                                dst_nodata = None, 
+                                dst_nodata = None,
                                 cutline_where = None,
                                 crop_to_cutline = True,
                                 pixel_width = None,
@@ -84,7 +87,8 @@ def open_clipped_raster_as_image (raster_file,
                                 output_type = None,
                                 dst_srs = None,
                                 pixel_res = None,
-                                resample_alg = None
+                                resample_alg = None,
+                                src_nodata = None,
                                   ) :
     in_mem_tiff = None
     if any(arg is not None for arg in [cutline,dst_nodata,pixel_width,pixel_height,dst_srs,pixel_res,resample_alg]):
@@ -99,19 +103,33 @@ def open_clipped_raster_as_image (raster_file,
                                                 output_type,
                                                 dst_srs,
                                                 pixel_res,
-                                                resample_alg)
+                                                resample_alg,
+                                                src_nodata)
 
     raster_file = in_mem_tiff if in_mem_tiff is not None else raster_file
 
-    gdal_ds = gdal.Open(raster_file)
-    gdal_band = gdal_ds.GetRasterBand(1)
-    img = gdal_band.ReadAsArray()
 
-    gdal_ds_obj = None
+    output = None
+    gdal_ds = gdal.Open(raster_file)
+    if gdal_ds.RasterCount == 1:
+        output = gdal_ds.GetRasterBand(1).ReadAsArray()
+    else:
+        output_type = {gdal.GDT_Byte:np.uint8,
+                       gdal.GDT_UInt16:np.uint16,
+                       gdal.GDT_Int16:np.int16,
+                       gdal.GDT_Int32:np.int32,
+                       gdal.GDT_UInt32:np.uint32,
+                       gdal.GDT_Float32:np.float32}
+
+        output = np.empty(shape=(gdal_ds.RasterYSize,gdal_ds.RasterXSize,gdal_ds.RasterCount),
+                          dtype=output_type[gdal_ds.GetRasterBand(1).DataType])
+        for b in range(gdal_ds.RasterCount):
+            output[:,:,b] = np.copy(gdal_ds.GetRasterBand(b+1).ReadAsArray())
+
+    gdal_ds = None
     if in_mem_tiff is not None:
         gdal.Unlink(in_mem_tiff)
-
-    return img
+    return output
 
 def get_raster_bbox (raster_file, t_srs = None) :
     gdal_ds = gdal.Open(raster_file)
@@ -191,18 +209,13 @@ def get_statistics(single_band_raster):
 
     return stat
 
-
 def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_val = None, compress=None):
 
-    array_ref = None
     if (array.ndim == 2) :
-        array_ref = list()
-        array_ref.append(array)
-    else: array_ref = array
-   
-    bands_num = 1 if (array.ndim==2) else array.shape[0]
+        array = np.copy(array).reshape((array.shape[0],array.shape[1],1))
 
-    rows,cols = array_ref[0].shape[0],array_ref[0].shape[1]
+    bands_num = array.shape[2]
+    rows,cols = array.shape[0],array.shape[1]
     originX,originY = rasterOrigin[0],rasterOrigin[1]
 
     driver = gdal.GetDriverByName('GTiff')
@@ -212,7 +225,7 @@ def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_v
                     np.int32:gdal.GDT_Int32,
                     np.uint32:gdal.GDT_UInt32,
                     np.float32:gdal.GDT_Float32,
-                    np.float64:gdal.GDT_Float32}[type(array_ref[0][0][0])]
+                    np.float64:gdal.GDT_Float32}[type(array[0][0][0])]
     options = [f'COMPRESS={compress}'] if compress is not None else None
     outRaster = (driver.Create(output_geotiff, cols, rows, bands_num, output_type) if options is None
                 else driver.Create(output_geotiff, cols, rows, bands_num, output_type, options = options) )
@@ -225,15 +238,14 @@ def array2geotiff(output_geotiff, rasterOrigin, pixel_size, srs, array, nodata_v
     
     for b in range(bands_num):
         outband = outRaster.GetRasterBand(b+1)
-        outband.WriteArray(array_ref[b])
+        outband.WriteArray(array[:,:,b])
         if nodata_val is not None:
             outband.SetNoDataValue(nodata_val)
         outband.FlushCache()
-    array_ref = None 
     outRaster = None
 
 
-def extract_georeference (raster_file, cutline = None):
+def extract_georeference (raster_file, cutline = None) :#-> tuple[osr.SpatialReference,list]:
     if cutline is not None:
         in_mem_tif = os.path.join('/vsimem',str(random()) + '.tif')
         gdal.Warp(in_mem_tif,
