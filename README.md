@@ -1,2 +1,2 @@
-# common_utils
-common utils for Python scripts
+# gdal_utils
+wrapper over gdal api for most frequent operations
