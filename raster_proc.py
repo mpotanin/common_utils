@@ -7,7 +7,7 @@ from osgeo import osr
 import numpy as np
 from random import seed
 from random import random
-from common_utils import vector_operations as vop
+from gdal_utils import vector_operations as vop
 
 import time
 seed(time.time() * 1000)
