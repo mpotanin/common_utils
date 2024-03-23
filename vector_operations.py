@@ -17,6 +17,7 @@ import time
 
 seed(time.time() * 1000)
 
+ogr.RegisterAll()
 
 
 class BBOX :
@@ -76,7 +77,12 @@ class BBOX :
 class VectorFile:
 
     @staticmethod
-    def get_all_features (vector_file, t_srs = None, column_name_filt = None, value_filt = None):
+    def get_all_features (vector_file,
+                          t_srs = None,
+                          transform_to_4326 = True,
+                          column_name_filt = None,
+                          value_filt = None):
+
         ds = gdal.OpenEx(vector_file, gdal.OF_VECTOR )
         #ds = ogr.Open(vector_file)
         if ds is None:
@@ -87,16 +93,16 @@ class VectorFile:
                 
         #source_srs = lyr.GetSpatialRef()
 
-        srs_4326 = osr.SpatialReference()
-        srs_4326.ImportFromEPSG(4326)
-        if int(osgeo.__version__[0]) >= 3:
-            # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
-            srs_4326.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-
-        coordTrans = 0
-        t_srs = srs_4326 if not t_srs else t_srs
-        s_srs = srs_4326 if not lyr.GetSpatialRef() else lyr.GetSpatialRef()
-        coordTrans = osr.CoordinateTransformation(s_srs, t_srs)
+        coordTrans = None
+        if transform_to_4326 or t_srs is not None:
+            srs_4326 = osr.SpatialReference()
+            srs_4326.ImportFromEPSG(4326)
+            if int(osgeo.__version__[0]) >= 3:
+                # GDAL 3 changes axis order: https://github.com/OSGeo/gdal/issues/154
+                srs_4326.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+            t_srs = t_srs if t_srs is not None else srs_4326
+            s_srs = srs_4326 if not lyr.GetSpatialRef() else lyr.GetSpatialRef()
+            coordTrans = osr.CoordinateTransformation(s_srs, t_srs)
 
         """
         if not t_srs :
@@ -126,8 +132,9 @@ class VectorFile:
             if column_name_filt is not None and value_filt is not None:
                 if feat.GetFieldAsString(column_name_filt) != value_filt:
                     continue
-            geom = feat.GetGeometryRef()
-            geom.Transform(coordTrans)
+            if coordTrans is not None:
+                geom = feat.GetGeometryRef()
+                geom.Transform(coordTrans)
             output.append(feat)
 
         ds = None
@@ -177,7 +184,9 @@ class VectorFile:
 
         id_field = ogr.FieldDefn("id", ogr.OFTInteger)
         outlayer.CreateField(id_field)
-        
+
+
+
         feature = ogr.Feature(outlayer.GetLayerDefn())
         feature.SetGeometry(ogr.CreateGeometryFromWkt(wkt_polygeom))
         feature.SetField("id", 1)
